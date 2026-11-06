@@ -1,0 +1,8 @@
+Arquivo responsavel para listar todas as bibliotescas usadas no projeto
+pip install -r requirements.txt usa isso para conseguir executar em outro ambiente
+
+
+langgraph
+langchain-core
+langchain-groq
+python-dotenv
