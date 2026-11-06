@@ -1,0 +1,31 @@
+# Byte-compiled / optimized / DLL files (Python)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments (Ambientes virtuais)
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Environment variables (Credenciais e chaves de API)
+.env
+!.env.example
+
+# IDEs e editores de código
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testes e Cobertura (Pytest/Coverage)
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs e Arquivos temporários
+*.log
+.DS_Store
