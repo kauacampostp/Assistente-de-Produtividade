@@ -4,6 +4,7 @@ from app import LLM
 from graph.state import AgentState
 
 
+# função para classificar a intenção do usuário
 def classify_intent(state: AgentState):
 
     SYSTEM_PROMPT = """
@@ -26,3 +27,36 @@ def classify_intent(state: AgentState):
     intent = response.content.strip().lower()
 
     return {"intent": intent}
+
+
+# função para guiar rota a parti da intenção detectada
+def route_intent(state: AgentState):
+    intent = state["intent"]
+
+    routes = {
+        "knowledge": "knowledge",
+        "productivity": "productivity",
+        "review": "review",
+        "planning": "planning",
+    }
+
+    if intent not in routes:
+        raise ValueError(f"Intenção inválida: {intent}")
+
+    return routes[intent]
+
+
+def knowledge_flow(state: AgentState):
+    return {"llm_answer": "Fluxo de consulta de conhecimento ainda não implementado."}
+
+
+def productivity_flow(state: AgentState):
+    return {"llm_answer": "Fluxo de produtividade ainda não implementado."}
+
+
+def review_flow(state: AgentState):
+    return {"llm_answer": "Fluxo de revisão da rotina ainda não implementado."}
+
+
+def planning_flow(state: AgentState):
+    return {"llm_answer": "Fluxo de planejamento ainda não implementado."}
