@@ -1,6 +1,4 @@
-
 from rag.retriever import retrieve_documents
-
 
 query = "Como lidar com a ansiedade?"
 
