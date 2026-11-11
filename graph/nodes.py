@@ -2,6 +2,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app import LLM
 from graph.state import AgentState
+from rag.workflow import rag_graph
 
 
 # função para classificar a intenção do usuário
@@ -47,7 +48,9 @@ def route_intent(state: AgentState):
 
 
 def knowledge_flow(state: AgentState):
-    return {"llm_answer": "Fluxo de consulta de conhecimento ainda não implementado."}
+    result = rag_graph.invoke({"user_message": state["user_message"]})
+
+    return {"llm_answer": result["llm_answer"]}
 
 
 def productivity_flow(state: AgentState):

@@ -6,3 +6,7 @@ langgraph
 langchain-core
 langchain-groq
 python-dotenv
+langchain-text-splitters
+fastembed
+langchain-community
+langchain-chroma

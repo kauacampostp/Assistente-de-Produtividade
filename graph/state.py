@@ -1,6 +1,8 @@
 # permite definir a estrutura e tipo da chave de um dic
 from typing import Literal, NotRequired, TypedDict
 
+from langchain_core.documents import Document
+
 Intent = Literal["knowledge", "productivity", "review", "planning"]
 
 
@@ -24,6 +26,12 @@ class AgentState(TypedDict):
 
     # RAG
     find_docs: NotRequired[list[str]]
+
+    # RAG agêntico
+    search_query: NotRequired[str]
+    retrieved_docs: NotRequired[list[Document]]
+    attempts: NotRequired[int]
+    documents_relevant: NotRequired[bool]
 
     # MCP
     todoist_tasks: NotRequired[list[Task]]
