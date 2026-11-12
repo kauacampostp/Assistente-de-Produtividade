@@ -12,6 +12,7 @@ embeddings = FastEmbedEmbeddings(
 )
 
 
+# Gera o vetor dos embeddings dos documentos
 def get_vector_store():
     return Chroma(
         collection_name="knowledge_base",

@@ -10,3 +10,7 @@ langchain-text-splitters
 fastembed
 langchain-community
 langchain-chroma
+mcp[cli]>=2,<3
+google-auth-oauthlib
+google-auth
+google-api-python-client

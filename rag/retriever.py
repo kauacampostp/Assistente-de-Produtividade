@@ -1,6 +1,7 @@
 from rag.vector_store import get_vector_store
 
 
+# Faz pesquisa no vetor por similaridade (cosseno)
 def retrieve_documents(query: str, k: int = 4):
     vector_store = get_vector_store()
 

@@ -35,6 +35,7 @@ class AgentState(TypedDict):
 
     # MCP
     todoist_tasks: NotRequired[list[Task]]
+    todoist_result: NotRequired[str]
     calendar_events: NotRequired[list[CalendarEvents]]
 
     # Resposta
