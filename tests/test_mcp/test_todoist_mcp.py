@@ -1,30 +1,25 @@
 import asyncio
-import os
 
-from mcp import Client, StdioServerParameters
-
-server = StdioServerParameters(
-    command="npx",
-    args=["-y", "mcp-remote", "https://ai.todoist.net/mcp"],
-    env=os.environ.copy(),
-)
+from mcp_servers.clients import list_mcp_tools, todoist_server
 
 
 async def main():
-    async with Client(server) as client:
-        # Descobrir ferramentas
-        result = await client.list_tools()
-        tools = result.tools
+    tools = await list_mcp_tools(todoist_server())
 
-        print(f"Total de ferramentas: {len(tools)}")
+    selected = {
+        "find-tasks",
+        "add-tasks",
+        "update-tasks",
+        "find-projects",
+        "add-projects",
+        "update-projects",
+    }
 
-        # Consultar estrutura do Todoist
-        result = await client.call_tool("get-overview", {})
-
-        print("\nEstrutura do Todoist:")
-        for content in result.content:
-            if hasattr(content, "text"):
-                print(content.text)
+    for tool in tools:
+        if tool.name in selected:
+            print(f"\n{'=' * 50}")
+            print(tool.name)
+            print(tool.model_dump(by_alias=True))
 
 
 if __name__ == "__main__":

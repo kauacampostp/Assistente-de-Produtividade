@@ -38,5 +38,12 @@ class AgentState(TypedDict):
     todoist_result: NotRequired[str]
     calendar_events: NotRequired[list[CalendarEvents]]
 
+    # Skills
+    skill_name: NotRequired[str | None]
+    skill_content: NotRequired[str | None]
+
     # Resposta
     llm_answer: NotRequired[str]
+
+    # Operação aguardando confirmação
+    pending_operation: NotRequired[dict | None]

@@ -3,7 +3,7 @@ from pathlib import Path
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Pega os arquivos da pasta "documents"
+# Pega os arquivos da pasta "documents". __file__ é o texto do caminho com o Path() torna ele em um objeto manipulavel | .parent pega a pasta Pai
 DOCUMENTS_DIR = Path(__file__).parent / "documents"
 
 
@@ -34,13 +34,14 @@ def load_documents():
 
 # Criar chunks (partes da divisão do texto)
 def split_documents(documents):
-    # size = tamanho de cada parte, overlap = sobreposição para manter conecxão das partes
+    # Recebe uma classe. size = tamanho de cada parte, overlap = sobreposição para manter conecxão das partes
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
 
+    # Metodo para fazer a separação com base an configuração
     chunks = text_splitter.split_documents(documents)
 
     return chunks

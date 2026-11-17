@@ -153,9 +153,9 @@ def list_calendar_events(max_results=10):
 
     service = build("calendar", "v3", credentials=credentials)
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(datetime.UTC).isoformat()
 
     result = (
         service.events()
@@ -170,3 +170,65 @@ def list_calendar_events(max_results=10):
     )
 
     return result.get("items", [])
+
+
+# ==========================================
+# TODOIST - FERRAMENTAS DE TAREFAS E PROJETOS
+# ==========================================
+
+
+async def call_todoist_tool(tool_name: str, arguments: dict | None = None):
+    """Executa uma ferramenta do servidor MCP do Todoist."""
+    return await call_mcp_tool(
+        todoist_server(),
+        tool_name,
+        arguments or {},
+    )
+
+
+# TAREFAS
+
+
+async def find_tasks(arguments: dict | None = None):
+    """Lista ou pesquisa tarefas."""
+    return await call_todoist_tool("find-tasks", arguments)
+
+
+async def add_tasks(tasks: list[dict]):
+    """Cadastra uma ou mais tarefas."""
+    return await call_todoist_tool(
+        "add-tasks",
+        {"tasks": tasks},
+    )
+
+
+async def update_tasks(tasks: list[dict]):
+    """Atualiza uma ou mais tarefas existentes."""
+    return await call_todoist_tool(
+        "update-tasks",
+        {"tasks": tasks},
+    )
+
+
+# PROJETOS
+
+
+async def find_projects(arguments: dict | None = None):
+    """Lista ou pesquisa projetos."""
+    return await call_todoist_tool("find-projects", arguments)
+
+
+async def add_projects(projects: list[dict]):
+    """Cadastra um ou mais projetos."""
+    return await call_todoist_tool(
+        "add-projects",
+        {"projects": projects},
+    )
+
+
+async def update_projects(projects: list[dict]):
+    """Atualiza um ou mais projetos existentes."""
+    return await call_todoist_tool(
+        "update-projects",
+        {"projects": projects},
+    )
