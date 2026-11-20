@@ -45,5 +45,6 @@ builder.add_edge("review", END)
 builder.add_edge("planning", END)
 
 
-# Compila o grafo
-graph = builder.compile()
+# Compila o grafo com memória persistente
+def build_graph(checkpointer):
+    return builder.compile(checkpointer=checkpointer)

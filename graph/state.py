@@ -24,6 +24,9 @@ class AgentState(TypedDict):
     user_message: str
     intent: NotRequired[Intent]
 
+    # Memória conversacional
+    conversation_history: NotRequired[list[dict[str, str]]]
+
     # RAG
     find_docs: NotRequired[list[str]]
 

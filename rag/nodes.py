@@ -4,9 +4,21 @@ from app import LLM
 from rag.retriever import retrieve_documents
 
 
+def get_conversation_context(state):
+    history = state.get("conversation_history", [])
+
+    if not history:
+        return "Nenhuma conversa anterior."
+
+    return "\n".join(
+        f"Usuário: {item['user']}\nAssistente: {item['assistant']}"
+        for item in history[-10:]
+    )
+
+
 # 1. Recupera documentos no ChromaDB
 def retrieve(state):
-    query = state.get("search_query", state["user_message"])
+    query = state.get("search_query") or state["user_message"]
 
     documents = retrieve_documents(query, k=4)
 
@@ -75,7 +87,15 @@ def rewrite_query(state):
     response = LLM.invoke(
         [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=state["user_message"]),
+            HumanMessage(
+                content=f"""
+                Histórico da conversa:
+                {get_conversation_context(state)}
+
+                Pergunta atual:
+                {state["user_message"]}
+                """
+            ),
         ]
     )
 
@@ -96,11 +116,16 @@ def generate_answer(state):
         for document in documents
     )
 
-    system_prompt = """
+    history = get_conversation_context(state)
+
+    system_prompt = f"""
     Você é um assistente de conhecimento.
 
     Responda à pergunta utilizando exclusivamente
     as informações presentes nos documentos fornecidos.
+
+    Utilize o histórico da conversa para compreender
+    referências a perguntas e assuntos anteriores.
 
     Regras:
     - Não invente informações.
@@ -109,6 +134,9 @@ def generate_answer(state):
     - Identifique as fontes utilizadas na resposta,
       mencionando o nome dos arquivos.
     - Responda em português.
+
+    Histórico da conversa:
+    {history}
     """
 
     response = LLM.invoke(
@@ -116,11 +144,11 @@ def generate_answer(state):
             SystemMessage(content=system_prompt),
             HumanMessage(
                 content=f"""
-            Pergunta: {state["user_message"]}
+                Pergunta atual: {state["user_message"]}
 
-            Documentos recuperados:
-            {context}
-            """
+                Documentos recuperados:
+                {context}
+                """
             ),
         ]
     )
@@ -129,11 +157,32 @@ def generate_answer(state):
 
 
 # Caso as buscas não encontrem contexto suficiente
+# Caso os documentos não encontrem contexto suficiente
 def no_context(state):
-    return {
-        "llm_answer": (
-            "Não encontrei informações suficientes nos documentos "
-            "para responder com segurança. Tente reformular sua pergunta "
-            "ou adicionar documentos à base de conhecimento."
-        )
-    }
+    history = get_conversation_context(state)
+
+    response = LLM.invoke(
+        [
+            SystemMessage(
+                content=f"""
+                Você é um assistente pessoal com memória conversacional.
+
+                Os documentos não forneceram informações suficientes.
+                Portanto, utilize o histórico da conversa para responder.
+
+                Regras:
+                - Priorize informações declaradas pelo próprio usuário.
+                - Não invente nem deduza informações pessoais.
+                - Se a informação não estiver no histórico,
+                  informe que não sabe.
+                - Responda em português.
+
+                Histórico da conversa:
+                {history}
+                """
+            ),
+            HumanMessage(content=state["user_message"]),
+        ]
+    )
+
+    return {"llm_answer": response.content}

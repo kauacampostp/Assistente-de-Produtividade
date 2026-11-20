@@ -14,7 +14,21 @@ from rag.workflow import rag_graph
 from skills.loader import get_skill_catalog, load_skill
 
 
-def select_skill(message: str):
+def get_conversation_context(state: AgentState) -> str:
+    """Formata o histórico da conversa para enviar ao LLM."""
+
+    history = state.get("conversation_history", [])
+
+    if not history:
+        return "Nenhuma conversa anterior."
+
+    return "\n".join(
+        f"Usuário: {item['user']}\nAssistente: {item['assistant']}"
+        for item in history[-10:]
+    )
+
+
+def select_skill(message: str, history: str = ""):
     """Seleciona e carrega uma Skill conforme a mensagem do usuário."""
 
     catalog = get_skill_catalog()
@@ -43,6 +57,8 @@ def select_skill(message: str):
 
             Skills disponíveis:
             {descriptions}
+            Histórico da conversa:
+            {history}
         """
             ),
             HumanMessage(content=message),
@@ -105,7 +121,14 @@ def classify_intent(state: AgentState):
 
         response = LLM.invoke(
             [
-                SystemMessage(content=system_prompt),
+                SystemMessage(
+                    content=f"""
+                    {system_prompt}
+
+                    Histórico da conversa:
+                    {get_conversation_context(state)}
+                    """
+                ),
                 HumanMessage(content=state["user_message"]),
             ]
         )
@@ -116,7 +139,9 @@ def classify_intent(state: AgentState):
             intent = "productivity"
 
     # Seleciona e carrega a Skill
-    skill_name, skill_content = select_skill(state["user_message"])
+    skill_name, skill_content = select_skill(
+        state["user_message"], get_conversation_context(state)
+    )
 
     return {
         "intent": intent,
@@ -159,7 +184,12 @@ async def knowledge_flow(state: AgentState):
 
         return {"llm_answer": response.content}
 
-    result = rag_graph.invoke({"user_message": state["user_message"]})
+    result = await rag_graph.ainvoke(
+        {
+            "user_message": state["user_message"],
+            "conversation_history": state.get("conversation_history", []),
+        }
+    )
 
     answer = result["llm_answer"]
     skill_content = state.get("skill_content")
@@ -206,7 +236,9 @@ def mcp_result_to_text(result):
 
 
 # AUXILIAR: INTERPRETAR A OPERAÇÃO SOLICITADA
-def extract_operation(message: str, skill_content: str | None = None):
+def extract_operation(
+    message: str, skill_content: str | None = None, history: str = ""
+):
     prompt = """
     Você é um interpretador de operações do Todoist.
 
@@ -263,11 +295,13 @@ def extract_operation(message: str, skill_content: str | None = None):
         [
             SystemMessage(
                 content=f"""
-            {prompt}
+                    {prompt}
 
-            Instruções da Skill selecionada:
-            {skill_content or "Nenhuma Skill selecionada."}
-        """
+                    Instruções da Skill selecionada:
+                    {skill_content or "Nenhuma Skill selecionada."}
+                    Histórico da conversa:
+                    {history}
+                """
             ),
             HumanMessage(content=message),
         ]
@@ -334,6 +368,7 @@ async def productivity_flow(state: AgentState):
         operation = extract_operation(
             state["user_message"],
             state.get("skill_content"),
+            get_conversation_context(state),
         )
 
         tool_name = operation["tool"]
@@ -373,6 +408,8 @@ async def productivity_flow(state: AgentState):
                     
                     Instruções adicionais da Skill:
                     {state.get("skill_content") or "Nenhuma Skill selecionada."}
+                    Histórico da conversa:
+                    {get_conversation_context(state)}
                 """
                 ),
                 HumanMessage(
@@ -481,8 +518,73 @@ async def productivity_flow(state: AgentState):
 
 
 # REVISÃO
-def review_flow(state: AgentState):
-    return {"llm_answer": "Fluxo de revisão da rotina ainda não implementado."}
+async def review_flow(state: AgentState):
+    # Consultar tarefas do Todoist
+    tasks_result = await call_todoist_tool(
+        "find-tasks",
+        {"limit": 20},
+    )
+    tasks_data = mcp_result_to_text(tasks_result)
+
+    # Limitar dados das tarefas
+    tasks_data = tasks_data[:5000]
+
+    # Consultar compromissos do calendário
+    events = list_calendar_events()
+
+    calendar_data = "\n".join(
+        f"""
+        Evento: {event.get("summary", "Sem título")}
+        Início: {event.get("start", {}).get("dateTime", event.get("start", {}).get("date", "Não informado"))}
+        Fim: {event.get("end", {}).get("dateTime", event.get("end", {}).get("date", "Não informado"))}
+        """
+        for event in events[:8]
+    )
+
+    # Limitar histórico da conversa
+    history = get_conversation_context(state)[-1500:]
+
+    response = LLM.invoke(
+        [
+            SystemMessage(
+                content=f"""
+                Você é um assistente especializado em revisão de rotina.
+
+                Analise tarefas e compromissos.
+                Identifique:
+                - Tarefas pendentes e prioridades.
+                - Compromissos próximos.
+                - Possíveis conflitos.
+                - Sobrecarga ou concentração de atividades.
+                - Recomendações para organizar a rotina.
+
+                Não invente informações.
+                Não afirme que uma tarefa está atrasada sem evidência.
+                Não altere tarefas ou compromissos.
+
+                Histórico recente:
+                {history}
+            """
+            ),
+            HumanMessage(
+                content=f"""
+                Solicitação: {state["user_message"]}
+
+                Tarefas do Todoist:
+                {tasks_data}
+
+                Compromissos do Google Calendar:
+                {calendar_data or "Nenhum compromisso encontrado."}
+            """
+            ),
+        ]
+    )
+
+    return {
+        "todoist_result": tasks_data,
+        "calendar_events": events,
+        "llm_answer": response.content,
+    }
 
 
 # PLANEJAMENTO
@@ -502,13 +604,17 @@ async def planning_flow(state: AgentState):
     response = LLM.invoke(
         [
             SystemMessage(
-                content="""
-            Você é um assistente de planejamento pessoal.
-            Organize os compromissos cronologicamente.
-            Informe título, data, horário e local quando disponíveis.
-            Não invente informações.
-            Se não houver eventos, informe isso.
-        """
+                content=f"""
+                Você é um assistente de planejamento pessoal.
+
+                Organize os compromissos cronologicamente.
+                Informe título, data, horário e local quando disponíveis.
+                Não invente informações.
+                Se não houver eventos, informe isso.
+
+                Histórico da conversa:
+                {get_conversation_context(state)}
+                """
             ),
             HumanMessage(
                 content=f"""
@@ -522,6 +628,6 @@ async def planning_flow(state: AgentState):
     )
 
     return {
-        "calendar_events": [],
+        "calendar_events": events,
         "llm_answer": response.content,
     }

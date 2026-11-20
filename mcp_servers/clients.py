@@ -153,9 +153,9 @@ def list_calendar_events(max_results=10):
 
     service = build("calendar", "v3", credentials=credentials)
 
-    from datetime import datetime
+    from datetime import datetime, timezone
 
-    now = datetime.now(datetime.UTC).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     result = (
         service.events()
