@@ -162,6 +162,7 @@ async def rodar_bateria():
                     "obtido": resumo_obtido,
                 }
             )
+            await asyncio.sleep(30)
 
     print("\n=== TABELA PARA O README.MD ===\n")
     print(

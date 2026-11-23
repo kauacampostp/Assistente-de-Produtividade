@@ -11,8 +11,8 @@ def get_conversation_context(state):
         return "Nenhuma conversa anterior."
 
     return "\n".join(
-        f"Usuário: {item['user']}\nAssistente: {item['assistant']}"
-        for item in history[-10:]
+        f"Usuário: {item['user']}\nAssistente: {item['assistant'][:600]}"
+        for item in history[-4:]
     )
 
 
