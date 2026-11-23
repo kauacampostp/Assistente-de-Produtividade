@@ -16,6 +16,36 @@ def get_conversation_context(state):
     )
 
 
+def decide_retrieval(state):
+    response = LLM.invoke(
+        [
+            SystemMessage(
+                content="""
+                Decida se a pergunta exige consultar a base de documentos
+                pessoais do usuário (sermões, livros, anotações).
+
+                Responda somente:
+                BUSCAR  -> precisa dos documentos
+                DIRETO  -> pode ser respondida só com o histórico da conversa
+                           (ex.: "o que eu te disse antes?", saudações)
+                """
+            ),
+            HumanMessage(
+                content=f"""
+                Histórico:
+                {get_conversation_context(state)}
+
+                Pergunta: {state["user_message"]}
+                """
+            ),
+        ]
+    )
+
+    # Em caso de resposta vazia ou estranha, o padrão é buscar
+    answer = (response.content or "").strip().upper()
+    return {"needs_retrieval": not answer.startswith("DIRETO")}
+
+
 # 1. Recupera documentos no ChromaDB
 def retrieve(state):
     query = state.get("search_query") or state["user_message"]
@@ -35,7 +65,7 @@ def grade_documents(state):
     if not documents:
         return {"documents_relevant": False}
 
-    context = "\n\n".join(document.page_content for document in documents)
+    context = "\n\n".join(document.page_content[:700] for document in documents)
 
     system_prompt = """
     Você é um avaliador de relevância para um sistema RAG.

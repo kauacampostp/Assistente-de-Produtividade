@@ -2,6 +2,7 @@ from langgraph.graph import END, START, StateGraph
 
 from graph.state import AgentState
 from rag.nodes import (
+    decide_retrieval,
     generate_answer,
     grade_documents,
     no_context,
@@ -19,9 +20,16 @@ builder.add_node("grade_documents", grade_documents)
 builder.add_node("rewrite_query", rewrite_query)
 builder.add_node("generate_answer", generate_answer)
 builder.add_node("no_context", no_context)
+builder.add_node("decide_retrieval", decide_retrieval)
+
 
 # Fluxo principal
-builder.add_edge(START, "retrieve")
+builder.add_edge(START, "decide_retrieval")
+builder.add_conditional_edges(
+    "decide_retrieval",
+    lambda state: "retrieve" if state["needs_retrieval"] else "no_context",
+    {"retrieve": "retrieve", "no_context": "no_context"},
+)
 builder.add_edge("retrieve", "grade_documents")
 
 

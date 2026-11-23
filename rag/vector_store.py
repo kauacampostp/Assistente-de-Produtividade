@@ -19,3 +19,11 @@ def get_vector_store():
         persist_directory=str(VECTOR_DB_DIR),
         embedding_function=embeddings,
     )
+
+
+def create_vector_store(chunks):
+    """Recria a coleção do zero e indexa os chunks (evita duplicatas)."""
+    get_vector_store().delete_collection()
+    store = get_vector_store()
+    store.add_documents(chunks)
+    return store

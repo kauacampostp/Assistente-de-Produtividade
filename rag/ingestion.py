@@ -45,3 +45,13 @@ def split_documents(documents):
     chunks = text_splitter.split_documents(documents)
 
     return chunks
+
+
+if __name__ == "__main__":
+    from rag.vector_store import create_vector_store
+
+    documents = load_documents()
+    chunks = split_documents(documents)
+    create_vector_store(chunks)
+
+    print(f"Documentos: {len(documents)} | Chunks indexados: {len(chunks)}")

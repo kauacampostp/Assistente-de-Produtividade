@@ -46,11 +46,13 @@ class AgentState(TypedDict):
     retrieved_docs: NotRequired[list[Document]]
     attempts: NotRequired[int]
     documents_relevant: NotRequired[bool]
+    needs_retrieval: NotRequired[bool]
 
     # MCP (Ferramentas externas: Todoist e Calendar)
     todoist_tasks: NotRequired[list[Task]]
     todoist_result: NotRequired[str]
     calendar_events: NotRequired[list[CalendarEvents]]
+    tools_used: NotRequired[list[str]]
 
     # Skills (acompanhamento_projetos e analise_documental)
     skill_name: NotRequired[str | None]
@@ -58,7 +60,7 @@ class AgentState(TypedDict):
 
     # Guardrails
     guardrail_error: NotRequired[str | None]
-    
+
     # Resposta
     llm_answer: NotRequired[str]
 

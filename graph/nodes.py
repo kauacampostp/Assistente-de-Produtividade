@@ -1,4 +1,5 @@
 import json
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from mcp import ClientSession
@@ -18,17 +19,15 @@ from rag.workflow import rag_graph
 from skills.loader import get_skill_catalog, load_skill
 
 
-def get_conversation_context(state: AgentState) -> str:
-    """Formata o histórico da conversa para enviar ao LLM."""
-
+def get_conversation_context(state):
     history = state.get("conversation_history", [])
 
     if not history:
         return "Nenhuma conversa anterior."
 
     return "\n".join(
-        f"Usuário: {item['user']}\nAssistente: {item['assistant']}"
-        for item in history[-10:]
+        f"Usuário: {item['user']}\nAssistente: {item['assistant'][:600]}"
+        for item in history[-4:]
     )
 
 
@@ -36,12 +35,12 @@ def get_conversation_context(state: AgentState) -> str:
 
 
 def validate_input_node(state: AgentState):
-    """Valida a mensagem antes de iniciar o processamento."""
-
     valid, error = validate_input(state["user_message"])
-
     return {
         "guardrail_error": error,
+        "tools_used": [],
+        "skill_name": None,
+        "skill_content": None,
     }
 
 
@@ -283,40 +282,44 @@ async def execute_local_files_mcp(user_message: str) -> str:
                 plan = json.loads(raw[start:end])
 
                 outputs = []
+                used = []
                 for call in plan.get("calls", []):
                     t_name = call.get("tool")
                     t_args = call.get("arguments", {})
                     res = await session.call_tool(t_name, t_args)
                     text = mcp_result_to_text(getattr(res, "content", res))
                     outputs.append(f"[{t_name}]\n{text}")
+                    used.append(f"local_files:{t_name}")
 
-                return (
+                text = (
                     "\n\n".join(outputs) if outputs else "Nenhuma ferramenta executada."
                 )
+                return text, used
     except Exception:
         result = await call_mcp_tool(server_params, "listar_documentos")
-        return mcp_result_to_text(result)
+        return mcp_result_to_text(result), ["local_files:listar_documentos"]
+
+
+def is_file_operation(message: str) -> bool:
+    """Detecta pedidos para listar ou criar arquivos locais."""
+    m = message.lower()
+
+    create = re.search(r"\b(crie|criar|cria|salve|salvar)\b", m) and re.search(
+        r"(\bnota\b|\barquivo\b|\.md\b|\.txt\b)", m
+    )
+    listing = re.search(r"\b(list\w*|quais)\b", m) and re.search(
+        r"\b(arquivos|documentos|notas)\b", m
+    )
+
+    return bool(create or listing)
 
 
 # CONHECIMENTO
 async def knowledge_flow(state: AgentState):
     message = state["user_message"].lower()
 
-    if any(
-        term in message
-        for term in [
-            "listar documentos",
-            "quais documentos",
-            "documentos disponíveis",
-            "arquivos locais",
-            "arquivo local",
-            "diretório de notas",
-            "nota de resumo",
-            "criar uma nota",
-            "crie uma nota",
-        ]
-    ):
-        mcp_output = await execute_local_files_mcp(state["user_message"])
+    if is_file_operation(state["user_message"]):
+        mcp_output, tools_used = await execute_local_files_mcp(state["user_message"])
 
         response = LLM.invoke(
             [
@@ -336,6 +339,7 @@ async def knowledge_flow(state: AgentState):
         return {
             "llm_answer": response.content,
             "skill_name": state.get("skill_name"),
+            "tools_used": tools_used,
         }
 
     result = await rag_graph.ainvoke(
@@ -346,10 +350,15 @@ async def knowledge_flow(state: AgentState):
     )
 
     answer = result.get("llm_answer", "")
+    docs = result.get("retrieved_docs", [])
+    retrieved_context = "\n\n".join(
+        f"Fonte: {d.metadata.get('source', 'desconhecida')}\n{d.page_content}"
+        for d in docs
+    )
     retrieved_context = result.get("context") or result.get("documents") or ""
     skill_content = state.get("skill_content")
 
-    if skill_content:
+    if skill_content and result.get("documents_relevant"):
         response = LLM.invoke(
             [
                 SystemMessage(
@@ -383,9 +392,12 @@ async def knowledge_flow(state: AgentState):
         if response.content and response.content.strip():
             answer = response.content
 
+        tools_used = ["rag:chromadb"] if result.get("attempts", 0) > 0 else []
+
     return {
         "llm_answer": answer,
-        "skill_name": state.get("skill_name"),
+        "skill_name": None,
+        "tools_used": tools_used,
     }
 
 
@@ -598,6 +610,7 @@ async def productivity_flow(state: AgentState):
                 return {
                     "pending_operation": None,
                     "todoist_result": result_text,
+                    "tools_used": [f"todoist:{tool_name}"],
                     "llm_answer": (
                         f"Operação enviada ao Todoist: {pending['summary']}\n\n"
                         f"Retorno da ferramenta:\n{result_text}"
@@ -717,6 +730,7 @@ async def productivity_flow(state: AgentState):
 
         return {
             "todoist_result": result_text,
+            "tools_used": [f"todoist:{tool_name}"],
             "llm_answer": response.content,
         }
 
@@ -751,7 +765,7 @@ async def productivity_flow(state: AgentState):
                 "Informe os detalhes que faltam."
             )
         }
-
+    lookup_tools: list[str] = []
     if tool_name == "update-projects":
         for item in items:
             if not item.get("id") and item.get("name"):
@@ -759,6 +773,7 @@ async def productivity_flow(state: AgentState):
                     "find-projects",
                     {"searchText": item["name"], "limit": 10},
                 )
+                lookup_tools.append("todoist:find-projects")
 
                 result_text = mcp_result_to_text(result)
 
@@ -799,6 +814,7 @@ async def productivity_flow(state: AgentState):
             "arguments": arguments,
             "summary": summary,
         },
+        "tools_used": lookup_tools,
         "llm_answer": (
             f"Operação preparada: {summary}\n\n"
             f"Dados: {json.dumps(arguments, ensure_ascii=False, indent=2)}\n\n"
@@ -862,10 +878,10 @@ async def review_flow(state: AgentState):
 
                 Analise tarefas, compromissos e (quando fornecidas) anotações do usuário.
                 Identifique:
-- Tarefas pendentes e prioridades.
-- Compromissos próximos.
-- Possíveis conflitos ou sobrecarga.
-- Recomendações práticas para organizar a rotina.
+                - Tarefas pendentes e prioridades.
+                - Compromissos próximos.
+                - Possíveis conflitos ou sobrecarga.
+                - Recomendações práticas para organizar a rotina.
 
                 Não invente informações.
                 Não afirme que uma tarefa está atrasada sem evidência.
@@ -892,11 +908,16 @@ async def review_flow(state: AgentState):
             ),
         ]
     )
+    tools = ["todoist:find-tasks", "google_calendar:events.list"]
+
+    if rag_notes:
+        tools.append("rag:chromadb")
 
     return {
         "todoist_result": tasks_data,
         "calendar_events": events,
         "llm_answer": response.content,
+        "tools_used": tools,
     }
 
 
@@ -944,4 +965,5 @@ async def planning_flow(state: AgentState):
     return {
         "calendar_events": events,
         "llm_answer": response.content,
+        "tools_used": ["google_calendar:events.list"],
     }

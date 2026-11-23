@@ -152,6 +152,39 @@ def ler_documento(relative_path: str) -> str:
     return file.read_text(encoding="utf-8")
 
 
+# 4. Criar nota
+@mcp.tool()
+def criar_nota(relative_path: str, content: str) -> str:
+    """
+    Cria uma nova nota Markdown ou TXT na pasta autorizada.
+    Nunca sobrescreve arquivos existentes.
+    Exemplo de relative_path: 'Notas/checklist_revisao.md'
+    """
+    if not relative_path.strip():
+        raise ValueError("O caminho não pode ser vazio.")
+
+    if len(content.encode("utf-8")) > 100_000:
+        raise ValueError("Conteúdo muito grande (limite: 100 KB).")
+
+    candidate = (DOCUMENTS_DIR / relative_path).resolve()
+
+    try:
+        candidate.relative_to(DOCUMENTS_DIR)
+    except ValueError:
+        raise ValueError("Acesso negado: caminho fora da pasta autorizada.")
+
+    if candidate.suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise ValueError("Tipo de arquivo não permitido (use .md ou .txt).")
+
+    if candidate.exists():
+        raise FileExistsError("Já existe um arquivo com esse nome.")
+
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text(content, encoding="utf-8")
+
+    return f"Nota criada: {candidate.relative_to(DOCUMENTS_DIR).as_posix()}"
+
+
 # Inicia o servidor utilizando comunicação STDIO (Standard Input/Output)
 if __name__ == "__main__":
     mcp.run(transport="stdio")

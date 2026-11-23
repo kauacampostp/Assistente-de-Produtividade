@@ -231,23 +231,25 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    with st.chat_message("assistant") and st.spinner("Consultando agente..."):
-      try:
-          saida = asyncio.run(executar_turno(st.session_state.thread_id, prompt))
-          resposta = saida["resposta"]
-          skill = saida["skill_name"]
-          tools = saida["tools_used"]
+    with st.chat_message("assistant"):
+        try:
+            with st.spinner("Consultando agente..."):
+                saida = asyncio.run(executar_turno(st.session_state.thread_id, prompt))
 
-          st.markdown(resposta)
-          renderizar_observabilidade(skill, tools)
+            resposta = saida["resposta"]
+            skill = saida["skill_name"]
+            tools = saida["tools_used"]
 
-          st.session_state.mensagens.append(
-              {
-                  "role": "assistant",
-                  "content": resposta,
-                  "skill_name": skill,
-                  "tools_used": tools,
-              }
-          )
-      except Exception as erro: 
-          st.error(f"Erro ao executar o assistente: {erro}")
+            st.markdown(resposta)
+            renderizar_observabilidade(skill, tools)
+
+            st.session_state.mensagens.append(
+                {
+                    "role": "assistant",
+                    "content": resposta,
+                    "skill_name": skill,
+                    "tools_used": tools,
+                }
+            )
+        except Exception as erro:
+            st.error(f"Erro ao executar o assistente: {erro}")

@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Environments (Ambientes virtuais)
+# Ambientes virtuais
 .venv/
 venv/
 ENV/
@@ -11,25 +11,35 @@ env/
 env.bak/
 venv.bak/
 
-# Environment variables (Credenciais e chaves de API)
+# Credenciais e chaves de API
 .env
 !.env.example
+mcp_servers/google_calendar/token.json
 
-# IDEs e editores de código
+# IDEs e editores
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Testes e Cobertura (Pytest/Coverage)
+# Cobertura de testes
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Logs e Arquivos temporários
+# Logs e temporários
 *.log
 .DS_Store
 
+# Material pessoal / de estudo (não faz parte da entrega)
+tests/
+docs/
 
+# Bancos locais e saídas de teste
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+saida_testes.txt
 
-mcp_servers/google_calendar/token.json
+# Base vetorial (recriada com python -m rag.ingestion)
+rag/chroma_db/
