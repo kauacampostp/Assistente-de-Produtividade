@@ -10,7 +10,6 @@ from graph.state import AgentState
 from guardrails.input import validate_input
 from guardrails.output import validate_output
 from mcp_servers.clients import (
-    call_mcp_tool,
     call_todoist_tool,
     list_calendar_events,
     local_files_server,
@@ -35,7 +34,7 @@ def get_conversation_context(state):
 
 
 def validate_input_node(state: AgentState):
-    valid, error = validate_input(state["user_message"])
+    error = validate_input(state["user_message"])
     return {
         "guardrail_error": error,
         "tools_used": [],
@@ -243,65 +242,75 @@ def route_intent(state: AgentState):
 
 
 # AUXILIAR: EXECUÇÃO DINÂMICA NO SERVIDOR MCP LOCAL_FILES
-async def execute_local_files_mcp(user_message: str) -> str:
-    """Descobre e executa ferramentas do servidor MCP próprio (local_files)."""
+async def execute_local_files_mcp(user_message: str):
+    """Executa as ferramentas do MCP local_files de forma determinística.
+
+    O código decide quais ferramentas chamar; o LLM só redige o conteúdo da nota.
+    """
     server_params = local_files_server()
+    msg = user_message.lower()
+
+    wants_create = bool(
+        re.search(r"\b(crie|criar|cria|salve|salvar)\b", msg)
+        and re.search(r"(\bnota\b|\barquivo\b|\.md\b|\.txt\b)", msg)
+    )
+
+    # Nome do arquivo entre aspas, ex.: 'checklist_revisao.md'
+    name_match = re.search(r"['\"“‘]([\w\-. /]+\.(?:md|txt))['\"”’]", user_message)
+    filename = name_match.group(1) if name_match else "nota_resumo.md"
+
+    outputs: list[str] = []
+    used: list[str] = []
 
     try:
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                tools_response = await session.list_tools()
-                tools = tools_response.tools
 
-                tools_desc = "\n".join(
-                    f"- {t.name}: {t.description or ''} | schema: {json.dumps(t.inputSchema, ensure_ascii=False)}"
-                    for t in tools
-                )
+                # 1. Sempre lista (também serve de base para o conteúdo da nota)
+                res = await session.call_tool("listar_documentos", {})
+                listing = mcp_result_to_text(getattr(res, "content", res))
+                outputs.append(f"[listar_documentos]\n{listing}")
+                used.append("local_files:listar_documentos")
 
-                plan_response = LLM.invoke(
-                    [
-                        SystemMessage(
-                            content=f"""
-                            Você seleciona chamadas de ferramentas para o servidor MCP local_files.
-                            Ferramentas disponíveis:
-                            {tools_desc}
+                # 2. Cria a nota, se foi pedido
+                if wants_create:
+                    note = LLM.invoke(
+                        [
+                            SystemMessage(
+                                content=(
+                                    "Escreva em Markdown, em português, uma nota de "
+                                    "resumo/checklist de revisão baseada SOMENTE na "
+                                    "lista de arquivos fornecida. Não invente arquivos. "
+                                    "Não chame ferramentas. Responda apenas com o "
+                                    "conteúdo da nota."
+                                )
+                            ),
+                            HumanMessage(
+                                content=(
+                                    f"Pedido do usuário: {user_message}\n\n"
+                                    f"Arquivos disponíveis:\n{listing}"
+                                )
+                            ),
+                        ]
+                    )
 
-                            Retorne SOMENTE um JSON válido no formato:
-                            {{"calls": [{{"tool": "nome_ferramenta", "arguments": {{}}}}]}}
+                    res = await session.call_tool(
+                        "criar_nota",
+                        {"relative_path": filename, "content": note.content},
+                    )
+                    created = mcp_result_to_text(getattr(res, "content", res))
 
-                            Se o usuário pedir para listar E criar um arquivo, inclua ambas as chamadas na lista "calls".
-                            Use estritamente os nomes e parâmetros definidos no schema.
-                            """
-                        ),
-                        HumanMessage(content=user_message),
-                    ]
-                )
+                    if getattr(res, "isError", False):
+                        outputs.append(f"[criar_nota] ERRO: {created}")
+                    else:
+                        outputs.append(f"[criar_nota]\n{created}")
+                        used.append("local_files:criar_nota")
 
-                raw = plan_response.content.strip()
-                if raw.startswith("```"):
-                    raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-                start = raw.find("{")
-                end = raw.rfind("}") + 1
-                plan = json.loads(raw[start:end])
+    except Exception as error:
+        outputs.append(f"[erro no servidor MCP local_files] {error}")
 
-                outputs = []
-                used = []
-                for call in plan.get("calls", []):
-                    t_name = call.get("tool")
-                    t_args = call.get("arguments", {})
-                    res = await session.call_tool(t_name, t_args)
-                    text = mcp_result_to_text(getattr(res, "content", res))
-                    outputs.append(f"[{t_name}]\n{text}")
-                    used.append(f"local_files:{t_name}")
-
-                text = (
-                    "\n\n".join(outputs) if outputs else "Nenhuma ferramenta executada."
-                )
-                return text, used
-    except Exception:
-        result = await call_mcp_tool(server_params, "listar_documentos")
-        return mcp_result_to_text(result), ["local_files:listar_documentos"]
+    return "\n\n".join(outputs), used
 
 
 def is_file_operation(message: str) -> bool:
