@@ -34,14 +34,13 @@ def get_conversation_context(state):
 
 
 def validate_input_node(state: AgentState):
-    error = validate_input(state["user_message"])
+    valid, error = validate_input(state["user_message"])
     return {
-        "guardrail_error": error,
+        "guardrail_error": None if valid else error,
         "tools_used": [],
         "skill_name": None,
         "skill_content": None,
     }
-
 
 def route_after_input_validation(state: AgentState):
     """Decide se a mensagem pode continuar."""
