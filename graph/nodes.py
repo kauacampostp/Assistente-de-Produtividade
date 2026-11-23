@@ -42,6 +42,7 @@ def validate_input_node(state: AgentState):
         "skill_content": None,
     }
 
+
 def route_after_input_validation(state: AgentState):
     """Decide se a mensagem pode continuar."""
 
@@ -319,7 +320,7 @@ def is_file_operation(message: str) -> bool:
     create = re.search(r"\b(crie|criar|cria|salve|salvar)\b", m) and re.search(
         r"(\bnota\b|\barquivo\b|\.md\b|\.txt\b)", m
     )
-    listing = re.search(r"\b(list\w*|quais)\b", m) and re.search(
+    listing = re.search(r"\b(liste|listar|lista|listagem)\b", m) and re.search(
         r"\b(arquivos|documentos|notas)\b", m
     )
 
@@ -896,6 +897,8 @@ async def review_flow(state: AgentState):
                 - Possíveis conflitos ou sobrecarga.
                 - Recomendações práticas para organizar a rotina.
 
+                Responda sempre em português do Brasil.
+                Se algum dado estiver vazio ou faltar, não peça mais informações: proponha o plano com o que existe e liste as lacunas ao final.
                 Não invente informações.
                 Não afirme que uma tarefa está atrasada sem evidência.
                 Não altere tarefas ou compromissos.
