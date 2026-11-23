@@ -14,7 +14,7 @@ CASOS_DE_TESTE = [
         "desafiador": False,
         "thread_id": "teste-ct01",
         "turnos": [
-            "De acordo com meus documentos sobre Filipenses 4:6-9, como lidar com a ansiedade?"
+            "De acordo com meus documentos sobre tokenizadores, quais são os principais algoritmos de subpalavras e como eles impactam a janela de contexto?"
         ],
         "esperado": "Acionar o RAG, recuperar trechos de 'Ansiedade - Fp 4 6-9.md', citar a origem do documento e responder com base no conteúdo.",
     },
@@ -24,9 +24,9 @@ CASOS_DE_TESTE = [
         "desafiador": False,
         "thread_id": "teste-ct02",
         "turnos": [
-            "O que os materiais armazenados ensinam sobre a relação entre o esforço humano de pregar e a ação divina na conversão?"
+            "O que os materiais armazenados ensinam sobre como os modelos evitam inventar respostas quando falta evidência e como buscam novamente?"
         ],
-        "esperado": "Reformular a busca semântica quando os termos literais não bastarem, localizar 'O semear e a soberania de Deus.md' ou 'Verdade Evangelho (Paul Washer).md' e informar a fonte.",
+        "esperado": "Reformular a busca semântica quando os termos literais não bastarem, localizar RAG_e_Mitigacao_de_Alucinacoes.md e informar a fonte.",
     },
     {
         "id": "CT03",
@@ -64,7 +64,7 @@ CASOS_DE_TESTE = [
         "desafiador": False,
         "thread_id": "teste-ct06",
         "turnos": [
-            "Faça uma análise documental comparando os principais temas dos sermões salvos na minha base."
+            "Faça uma análise documental comparando os principais conceitos dos documentos da pasta IA_e_LLMs salvos na minha base."
         ],
         "esperado": "Carregar a skill 'analise_documental', sintetizar os pontos centrais dos documentos em rag/documents/Sermons/ e citar as fontes.",
     },
@@ -105,7 +105,7 @@ CASOS_DE_TESTE = [
         "desafiador": True,
         "thread_id": "teste-ct10",
         "turnos": [
-            "Estou sobrecarregado. Cruze meus compromissos da agenda, minhas tarefas atrasadas e minhas anotações locais sobre devocional e ansiedade para propor um plano realista, mas NÃO altere nada ainda."
+            "Estou sobrecarregado. Cruze meus compromissos da agenda, minhas tarefas atrasadas e minhas anotações locais sobre Deep Work e priorização para propor um plano realista, mas NÃO altere nada ainda."
         ],
         "esperado": "Combinar Skill, RAG (Ansiedade / Vida devocional), MCP (Calendar/Todoist/Local) e respeitar a restrição de apenas propor sem executar alterações.",
     },

@@ -137,8 +137,12 @@ def classify_intent(state: AgentState):
         "quais documentos",
         "documentos disponíveis",
         "meus documentos",
-        "sermões",
-        "sermão",
+        "tokenizadores",
+        "transformers",
+        "embeddings",
+        "rag",
+        "microsserviços",
+        "deep work",
         "análise documental",
         ".md",
     ]
@@ -350,55 +354,55 @@ async def knowledge_flow(state: AgentState):
     )
 
     answer = result.get("llm_answer", "")
-        docs = result.get("retrieved_docs", [])
-        retrieved_context = "\n\n".join(
-            f"Fonte: {d.metadata.get('source', 'desconhecida')}\n{d.page_content}"
-            for d in docs
+    docs = result.get("retrieved_docs", [])
+    retrieved_context = "\n\n".join(
+        f"Fonte: {d.metadata.get('source', 'desconhecida')}\n{d.page_content}"
+        for d in docs
+    )
+    tools_used = ["rag:chromadb"] if result.get("attempts", 0) > 0 else []
+    skill_content = state.get("skill_content")
+
+    if skill_content and result.get("documents_relevant"):
+        response = LLM.invoke(
+            [
+                SystemMessage(
+                    content=f"""
+                Você está operando sobre a base de conhecimento local do usuário (ChromaDB/RAG).
+                Os dados e arquivos apresentados abaixo JÁ FORAM recuperados e verificados na base real do usuário.
+                NUNCA diga que não tem acesso aos documentos nem que não pode confirmar a existência dos arquivos citados abaixo.
+
+                Estruture e aprofunde a resposta seguindo as diretrizes desta Skill:
+                {skill_content}
+
+                Preserve total fidelidade aos documentos recuperados, cite os nomes dos arquivos de origem e não invente informações.
+                IMPORTANTE: Não chame ou invoque nenhuma ferramenta. Apenas redija a resposta final em texto.
+            """
+                ),
+                HumanMessage(
+                    content=f"""
+                Pergunta do usuário:
+                {state["user_message"]}
+
+                Resposta inicial do RAG:
+                {answer}
+
+                Trechos / Contexto recuperado:
+                {retrieved_context}
+            """
+                ),
+            ]
         )
-        tools_used = ["rag:chromadb"] if result.get("attempts", 0) > 0 else []
-        skill_content = state.get("skill_content")
-    
-        if skill_content and result.get("documents_relevant"):
-            response = LLM.invoke(
-                [
-                    SystemMessage(
-                        content=f"""
-                    Você está operando sobre a base de conhecimento local do usuário (ChromaDB/RAG).
-                    Os dados e arquivos apresentados abaixo JÁ FORAM recuperados e verificados na base real do usuário.
-                    NUNCA diga que não tem acesso aos documentos nem que não pode confirmar a existência dos arquivos citados abaixo.
-    
-                    Estruture e aprofunde a resposta seguindo as diretrizes desta Skill:
-                    {skill_content}
-    
-                    Preserve total fidelidade aos documentos recuperados, cite os nomes dos arquivos de origem e não invente informações.
-                    IMPORTANTE: Não chame ou invoque nenhuma ferramenta. Apenas redija a resposta final em texto.
-                """
-                    ),
-                    HumanMessage(
-                        content=f"""
-                    Pergunta do usuário:
-                    {state["user_message"]}
-    
-                    Resposta inicial do RAG:
-                    {answer}
-    
-                    Trechos / Contexto recuperado:
-                    {retrieved_context}
-                """
-                    ),
-                ]
-            )
-    
-            if response.content and response.content.strip():
-                answer = response.content
-    
-        return {
-            "llm_answer": answer,
-            "skill_name": state.get("skill_name")
-            if skill_content and result.get("documents_relevant")
-            else None,
-            "tools_used": tools_used,
-        }
+
+        if response.content and response.content.strip():
+            answer = response.content
+
+    return {
+        "llm_answer": answer,
+        "skill_name": state.get("skill_name")
+        if skill_content and result.get("documents_relevant")
+        else None,
+        "tools_used": tools_used,
+    }
 
 
 # AUXILIAR: CONVERTER RETORNO MCP EM TEXTO
@@ -855,9 +859,10 @@ async def review_flow(state: AgentState):
             "anotações",
             "notas",
             "documentos",
-            "devocional",
-            "ansiedade",
-            "sermão",
+            "deep work",
+            "produtividade",
+            "arquitetura",
+            "llm",
         ]
     ):
         rag_res = await rag_graph.ainvoke(
