@@ -105,6 +105,9 @@ def buscar_documentos(query: str, max_results: int = 10) -> list[dict]:
 
         file = get_safe_file(relative_path)
 
+        if file.stat().st_size > 500_000:
+            continue
+
         try:
             content = file.read_text(encoding="utf-8")
         except UnicodeDecodeError:

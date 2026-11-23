@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import httpx2
@@ -29,7 +30,7 @@ TOKEN_FILE = PROJECT_ROOT / "mcp_servers" / "google_calendar" / "token.json"
 # Configuração do servidor MCP de arquivos
 def local_files_server():
     return StdioServerParameters(
-        command="/usr/bin/python",
+        command=sys.executable,
         args=[str(PROJECT_ROOT / "mcp_servers" / "local_files" / "server.py")],
         env=os.environ.copy(),
     )

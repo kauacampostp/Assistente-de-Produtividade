@@ -1,9 +1,13 @@
 import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from mcp import ClientSession
+from mcp.client.stdio import stdio_client
 
 from app import LLM
 from graph.state import AgentState
+from guardrails.input import validate_input
+from guardrails.output import validate_output
 from mcp_servers.clients import (
     call_mcp_tool,
     call_todoist_tool,
@@ -26,6 +30,41 @@ def get_conversation_context(state: AgentState) -> str:
         f"Usuário: {item['user']}\nAssistente: {item['assistant']}"
         for item in history[-10:]
     )
+
+
+# GUARDRAILS
+
+
+def validate_input_node(state: AgentState):
+    """Valida a mensagem antes de iniciar o processamento."""
+
+    valid, error = validate_input(state["user_message"])
+
+    return {
+        "guardrail_error": error,
+    }
+
+
+def route_after_input_validation(state: AgentState):
+    """Decide se a mensagem pode continuar."""
+
+    if state.get("guardrail_error"):
+        return "blocked"
+
+    return "continue"
+
+
+def validate_output_node(state: AgentState):
+    """Valida a resposta antes de entregá-la ao usuário."""
+
+    if state.get("guardrail_error"):
+        answer = state["guardrail_error"]
+    else:
+        answer = state.get("llm_answer", "")
+
+    return {
+        "llm_answer": validate_output(answer),
+    }
 
 
 def select_skill(message: str, history: str = ""):
@@ -88,6 +127,40 @@ def classify_intent(state: AgentState):
 
     message = state["user_message"].lower().strip()
 
+    local_file_keywords = [
+        "arquivos locais",
+        "arquivo local",
+        "diretório de notas",
+        "nota de resumo",
+        "criar uma nota",
+        "crie uma nota",
+        "listar documentos",
+        "quais documentos",
+        "documentos disponíveis",
+        "meus documentos",
+        "sermões",
+        "sermão",
+        "análise documental",
+        ".md",
+    ]
+
+    review_keywords = [
+        "sobrecarregado",
+        "revise minha rotina",
+        "revisão da rotina",
+        "revisar rotina",
+        "cruze meus compromissos",
+        "tarefas atrasadas",
+    ]
+
+    calendar_keywords = [
+        "google calendar",
+        "calendário",
+        "agenda",
+        "compromisso",
+        "compromissos",
+    ]
+
     todoist_keywords = [
         "todoist",
         "tarefa",
@@ -105,15 +178,27 @@ def classify_intent(state: AgentState):
         "atualizar tarefa",
     ]
 
-    if any(keyword in message for keyword in todoist_keywords):
+    has_todoist = any(k in message for k in todoist_keywords)
+    has_calendar = any(k in message for k in calendar_keywords)
+    has_review = any(k in message for k in review_keywords)
+    has_local_files = any(k in message for k in local_file_keywords)
+
+    # Prioridade 1: Revisão de rotina ou consultas cruzadas (Todoist + Calendar)
+    if has_review or (has_todoist and has_calendar):
+        intent = "review"
+    # Prioridade 2: Arquivos locais e base de documentos (MCP local_files / RAG)
+    elif has_local_files and not has_todoist:
+        intent = "knowledge"
+    # Prioridade 3: Operações específicas de tarefas/projetos no Todoist
+    elif has_todoist:
         intent = "productivity"
     else:
         system_prompt = """
         Classifique a mensagem em uma categoria:
 
-        - knowledge: perguntas sobre documentos e conhecimentos armazenados.
-        - productivity: consultas ou operações relacionadas a tarefas.
-        - review: revisão da rotina e produtividade.
+        - knowledge: perguntas sobre documentos, arquivos locais, anotações e conhecimentos armazenados.
+        - productivity: consultas ou operações relacionadas exclusivamente a tarefas e projetos no Todoist.
+        - review: revisão da rotina, sobrecarga ou consultas combinando tarefas e agenda.
         - planning: planejamento e compromissos do calendário.
 
         Retorne somente o nome da categoria.
@@ -154,6 +239,65 @@ def route_intent(state: AgentState):
     return state["intent"]
 
 
+# AUXILIAR: EXECUÇÃO DINÂMICA NO SERVIDOR MCP LOCAL_FILES
+async def execute_local_files_mcp(user_message: str) -> str:
+    """Descobre e executa ferramentas do servidor MCP próprio (local_files)."""
+    server_params = local_files_server()
+
+    try:
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools_response = await session.list_tools()
+                tools = tools_response.tools
+
+                tools_desc = "\n".join(
+                    f"- {t.name}: {t.description or ''} | schema: {json.dumps(t.inputSchema, ensure_ascii=False)}"
+                    for t in tools
+                )
+
+                plan_response = LLM.invoke(
+                    [
+                        SystemMessage(
+                            content=f"""
+                            Você seleciona chamadas de ferramentas para o servidor MCP local_files.
+                            Ferramentas disponíveis:
+                            {tools_desc}
+
+                            Retorne SOMENTE um JSON válido no formato:
+                            {{"calls": [{{"tool": "nome_ferramenta", "arguments": {{}}}}]}}
+
+                            Se o usuário pedir para listar E criar um arquivo, inclua ambas as chamadas na lista "calls".
+                            Use estritamente os nomes e parâmetros definidos no schema.
+                            """
+                        ),
+                        HumanMessage(content=user_message),
+                    ]
+                )
+
+                raw = plan_response.content.strip()
+                if raw.startswith("```"):
+                    raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+                start = raw.find("{")
+                end = raw.rfind("}") + 1
+                plan = json.loads(raw[start:end])
+
+                outputs = []
+                for call in plan.get("calls", []):
+                    t_name = call.get("tool")
+                    t_args = call.get("arguments", {})
+                    res = await session.call_tool(t_name, t_args)
+                    text = mcp_result_to_text(getattr(res, "content", res))
+                    outputs.append(f"[{t_name}]\n{text}")
+
+                return (
+                    "\n\n".join(outputs) if outputs else "Nenhuma ferramenta executada."
+                )
+    except Exception:
+        result = await call_mcp_tool(server_params, "listar_documentos")
+        return mcp_result_to_text(result)
+
+
 # CONHECIMENTO
 async def knowledge_flow(state: AgentState):
     message = state["user_message"].lower()
@@ -164,25 +308,35 @@ async def knowledge_flow(state: AgentState):
             "listar documentos",
             "quais documentos",
             "documentos disponíveis",
+            "arquivos locais",
+            "arquivo local",
+            "diretório de notas",
+            "nota de resumo",
+            "criar uma nota",
+            "crie uma nota",
         ]
     ):
-        result = await call_mcp_tool(
-            local_files_server(),
-            "listar_documentos",
-        )
-
-        documents = "\n".join(item.text for item in result if hasattr(item, "text"))
+        mcp_output = await execute_local_files_mcp(state["user_message"])
 
         response = LLM.invoke(
             [
                 SystemMessage(
-                    content="Informe os documentos disponíveis. Não invente nomes."
+                    content=(
+                        "Informe os resultados obtidos pelo servidor MCP de arquivos locais. "
+                        "Não invente nomes de arquivos ou conteúdos. "
+                        "IMPORTANTE: Não chame ferramentas."
+                    )
                 ),
-                HumanMessage(content=documents),
+                HumanMessage(
+                    content=f"Solicitação: {state['user_message']}\n\nRetorno do MCP local_files:\n{mcp_output}"
+                ),
             ]
         )
 
-        return {"llm_answer": response.content}
+        return {
+            "llm_answer": response.content,
+            "skill_name": state.get("skill_name"),
+        }
 
     result = await rag_graph.ainvoke(
         {
@@ -191,7 +345,8 @@ async def knowledge_flow(state: AgentState):
         }
     )
 
-    answer = result["llm_answer"]
+    answer = result.get("llm_answer", "")
+    retrieved_context = result.get("context") or result.get("documents") or ""
     skill_content = state.get("skill_content")
 
     if skill_content:
@@ -199,13 +354,15 @@ async def knowledge_flow(state: AgentState):
             [
                 SystemMessage(
                     content=f"""
-                Você deve revisar a resposta do assistente seguindo
-                as instruções desta Skill:
+                Você está operando sobre a base de conhecimento local do usuário (ChromaDB/RAG).
+                Os dados e arquivos apresentados abaixo JÁ FORAM recuperados e verificados na base real do usuário.
+                NUNCA diga que não tem acesso aos documentos nem que não pode confirmar a existência dos arquivos citados abaixo.
 
+                Estruture e aprofunde a resposta seguindo as diretrizes desta Skill:
                 {skill_content}
 
-                Preserve a fidelidade aos documentos recuperados.
-                Não acrescente informações sem fundamento nas fontes.
+                Preserve total fidelidade aos documentos recuperados, cite os nomes dos arquivos de origem e não invente informações.
+                IMPORTANTE: Não chame ou invoque nenhuma ferramenta. Apenas redija a resposta final em texto.
             """
                 ),
                 HumanMessage(
@@ -213,14 +370,18 @@ async def knowledge_flow(state: AgentState):
                 Pergunta do usuário:
                 {state["user_message"]}
 
-                Resposta produzida pelo RAG:
+                Resposta inicial do RAG:
                 {answer}
+
+                Trechos / Contexto recuperado:
+                {retrieved_context}
             """
                 ),
             ]
         )
 
-        answer = response.content
+        if response.content and response.content.strip():
+            answer = response.content
 
     return {
         "llm_answer": answer,
@@ -235,6 +396,64 @@ def mcp_result_to_text(result):
     return "\n".join(texts) if texts else str(result)
 
 
+def validate_operation_arguments(tool_name: str, arguments: dict):
+    """Valida os argumentos antes de executar uma ferramenta."""
+
+    if not isinstance(arguments, dict):
+        return False, "Os argumentos precisam ser um objeto."
+
+    required_keys = {
+        "add-tasks": "tasks",
+        "update-tasks": "tasks",
+        "add-projects": "projects",
+        "update-projects": "projects",
+    }
+
+    if tool_name in required_keys:
+        key = required_keys[tool_name]
+        items = arguments.get(key)
+
+        if not isinstance(items, list) or not items:
+            return False, f"O campo '{key}' precisa conter uma lista."
+
+        if not all(isinstance(item, dict) for item in items):
+            return False, "Todos os itens precisam ser objetos válidos."
+
+        for item in items:
+            if tool_name == "add-tasks":
+                if (
+                    not isinstance(item.get("content"), str)
+                    or not item["content"].strip()
+                ):
+                    return False, "Toda tarefa precisa ter um conteúdo válido."
+
+                if item.get("priority") is not None and item["priority"] not in (
+                    "p1",
+                    "p2",
+                    "p3",
+                    "p4",
+                    1,
+                    2,
+                    3,
+                    4,
+                ):
+                    return False, "Prioridade de tarefa inválida."
+
+            elif tool_name == "update-tasks":
+                if not item.get("id"):
+                    return False, "Toda tarefa a atualizar precisa de um ID."
+
+            elif tool_name == "add-projects":
+                if not isinstance(item.get("name"), str) or not item["name"].strip():
+                    return False, "Todo projeto precisa de um nome válido."
+
+            elif tool_name == "update-projects":
+                if not item.get("id"):
+                    return False, "Todo projeto a atualizar precisa de um ID."
+
+    return True, None
+
+
 # AUXILIAR: INTERPRETAR A OPERAÇÃO SOLICITADA
 def extract_operation(
     message: str, skill_content: str | None = None, history: str = ""
@@ -245,12 +464,12 @@ def extract_operation(
     Identifique uma única operação solicitada pelo usuário.
 
     Operações permitidas:
-    - find-tasks
-    - add-tasks
-    - update-tasks
-    - find-projects
-    - add-projects
-    - update-projects
+- find-tasks
+- add-tasks
+- update-tasks
+- find-projects
+- add-projects
+- update-projects
 
     Retorne SOMENTE um JSON válido neste formato:
     {
@@ -260,11 +479,11 @@ def extract_operation(
     }
 
     Regras:
-    - Para consultar ou pesquisar tarefas, use find-tasks.
-    - Para consultar ou pesquisar projetos, use find-projects.
-    - Para criar tarefas, cada item dentro de "tasks" DEVE utilizar "content" como nome da tarefa.
-    - Nunca utilize "name" para tarefas.
-    - Exemplo correto:
+- Para consultar ou pesquisar tarefas, use find-tasks.
+- Para consultar ou pesquisar projetos, use find-projects.
+- Para criar tarefas, cada item dentro de "tasks" DEVE utilizar "content" como nome da tarefa.
+- Nunca utilize "name" para tarefas.
+- Exemplo correto:
         {
             "tasks": [
                 {
@@ -274,21 +493,21 @@ def extract_operation(
             ]
         }
 
-    - Para atualizar tarefas, utilize "id" para identificar a tarefa e "content" para alterar seu nome.
-    - Para criar projetos, use add-projects com {"projects": [...]}.
-    - Para atualizar projetos, use update-projects com {"projects": [...]}.
-    - Para criar projetos, utilize "name" como nome do projeto.
-    - Não confunda a estrutura de tarefas com a de projetos.
-    - Prioridade de tarefas deve ser p1, p2, p3 ou p4.
-    - Para atualizar tarefas, use update-tasks.
-    - Para atualizar projetos, use update-projects.
-    - Se o usuário informar o nome de um projeto, mas não seu ID, retorne o nome no campo "name" para que o sistema possa pesquisar o projeto e obter o ID.
-    - Nunca invente IDs.
-    - Para atualizar um projeto como favorito, use "isFavorite": true.
-    - Para atualizar um projeto como não favorito, use "isFavorite": false.
-    - Se faltarem informações obrigatórias, não invente valores.
-    - Não interprete uma consulta como autorização para alterar dados.
-    - Se houver instruções de uma Skill, utilize-as para interpretar a solicitação, respeitando as ferramentas permitidas.
+- Para atualizar tarefas, utilize "id" para identificar a tarefa e "content" para alterar seu nome.
+- Para criar projetos, use add-projects com {"projects": [...]}.
+- Para atualizar projetos, use update-projects com {"projects": [...]}.
+- Para criar projetos, utilize "name" como nome do projeto.
+- Não confunda a estrutura de tarefas com a de projetos.
+- Prioridade de tarefas deve ser p1, p2, p3 ou p4.
+- Para atualizar tarefas, use update-tasks.
+- Para atualizar projetos, use update-projects.
+- Se o usuário informar o nome de um projeto, mas não seu ID, retorne o nome no campo "name" para que o sistema possa pesquisar o projeto e obter o ID.
+- Nunca invente IDs.
+- Para atualizar um projeto como favorito, use "isFavorite": true.
+- Para atualizar um projeto como não favorito, use "isFavorite": false.
+- Se faltarem informações obrigatórias, não invente valores.
+- Não interprete uma consulta como autorização para alterar dados.
+- Se houver instruções de uma Skill, utilize-as para interpretar a solicitação, respeitando as ferramentas permitidas.
     """
 
     response = LLM.invoke(
@@ -309,7 +528,6 @@ def extract_operation(
 
     raw = response.content.strip()
 
-    # Remove cercas Markdown, caso o modelo as retorne
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1]
         raw = raw.rsplit("```", 1)[0]
@@ -318,7 +536,9 @@ def extract_operation(
     end = raw.rfind("}") + 1
 
     if start < 0 or end <= start:
-        raise ValueError("O modelo não retornou um JSON válido.")
+        raise ValueError(
+            "Operação bloqueada: não é possível executar ações não permitidas ou sem confirmação explícita."
+        )
 
     return json.loads(raw[start:end])
 
@@ -333,25 +553,70 @@ async def productivity_flow(state: AgentState):
 
     if pending:
         if message in {"sim", "s", "confirmo", "confirmar", "pode", "pode executar"}:
-            result = await call_todoist_tool(
-                pending["tool"],
-                pending["arguments"],
-            )
-
-            result_text = mcp_result_to_text(result)
-
-            return {
-                "pending_operation": None,
-                "todoist_result": result_text,
-                "llm_answer": (
-                    f"Resultado da operação: {pending['summary']}\n\n{result_text}"
-                ),
+            allowed_tools = {
+                "add-tasks",
+                "update-tasks",
+                "add-projects",
+                "update-projects",
             }
+
+            tool_name = pending.get("tool")
+            arguments = pending.get("arguments")
+
+            if tool_name not in allowed_tools:
+                return {
+                    "pending_operation": None,
+                    "llm_answer": "Operação bloqueada: ferramenta não autorizada.",
+                }
+
+            valid, error = validate_operation_arguments(tool_name, arguments)
+
+            if not valid:
+                return {
+                    "pending_operation": None,
+                    "llm_answer": f"Operação bloqueada: {error}",
+                }
+
+            try:
+                result = await call_todoist_tool(
+                    tool_name,
+                    arguments,
+                )
+
+                result_text = mcp_result_to_text(result)
+
+                if getattr(result, "isError", False):
+                    return {
+                        "pending_operation": None,
+                        "todoist_result": result_text,
+                        "llm_answer": (
+                            "A operação não foi concluída pelo Todoist.\n\n"
+                            f"Detalhes: {result_text}"
+                        ),
+                    }
+
+                return {
+                    "pending_operation": None,
+                    "todoist_result": result_text,
+                    "llm_answer": (
+                        f"Operação enviada ao Todoist: {pending['summary']}\n\n"
+                        f"Retorno da ferramenta:\n{result_text}"
+                    ),
+                }
+
+            except Exception as error:
+                return {
+                    "pending_operation": None,
+                    "llm_answer": (
+                        "Não foi possível executar a operação no Todoist. "
+                        f"Erro: {str(error)}"
+                    ),
+                }
 
         if message in {"não", "nao", "n", "cancelar", "cancela"}:
             return {
                 "pending_operation": None,
-                "llm_answer": "Operação cancelada. Nenhuma alteração foi realizada no Todoist.",
+                "llm_answer": "Operação cancelada. Nenhuma alteração foi solicitada.",
             }
 
         return {
@@ -388,9 +653,35 @@ async def productivity_flow(state: AgentState):
     }
 
     if tool_name not in allowed_tools or not isinstance(arguments, dict):
-        return {
-            "llm_answer": "Não consegui identificar uma operação válida do Todoist."
-        }
+        if any(p in message for p in ["projeto", "projetos", "acompanhamento"]):
+            tool_name = "find-projects"
+            arguments = {"limit": 20}
+        else:
+            tool_name = "find-tasks"
+            arguments = {"limit": 20}
+
+    if tool_name in {
+        "add-tasks",
+        "update-tasks",
+        "add-projects",
+        "update-projects",
+    }:
+        key = {
+            "add-tasks": "tasks",
+            "update-tasks": "tasks",
+            "add-projects": "projects",
+            "update-projects": "projects",
+        }[tool_name]
+
+        items = arguments.get(key)
+
+        if not isinstance(items, list) or not items:
+            return {"llm_answer": "Operação inválida: faltam os dados necessários."}
+
+        if not all(isinstance(item, dict) for item in items):
+            return {
+                "llm_answer": "Operação inválida: existem itens com formato incorreto."
+            }
 
     # 3. CONSULTAS: EXECUÇÃO IMEDIATA
 
@@ -410,6 +701,7 @@ async def productivity_flow(state: AgentState):
                     {state.get("skill_content") or "Nenhuma Skill selecionada."}
                     Histórico da conversa:
                     {get_conversation_context(state)}
+                    IMPORTANTE: Não chame ou invoque nenhuma ferramenta. Todos os dados necessários já foram coletados. Apenas responda ao usuário em texto.
                 """
                 ),
                 HumanMessage(
@@ -439,7 +731,6 @@ async def productivity_flow(state: AgentState):
 
     key = required_keys[tool_name]
     items = arguments.get(key)
-    # Corrige o campo obrigatório de criação de tarefas
     if tool_name == "add-tasks":
         for item in items:
             if "name" in item and "content" not in item:
@@ -525,8 +816,6 @@ async def review_flow(state: AgentState):
         {"limit": 20},
     )
     tasks_data = mcp_result_to_text(tasks_result)
-
-    # Limitar dados das tarefas
     tasks_data = tasks_data[:5000]
 
     # Consultar compromissos do calendário
@@ -541,26 +830,47 @@ async def review_flow(state: AgentState):
         for event in events[:8]
     )
 
-    # Limitar histórico da conversa
+    # Se a solicitação mencionar anotações/documentos, consulta também o RAG
+    rag_notes = ""
+    msg_lower = state["user_message"].lower()
+    if any(
+        term in msg_lower
+        for term in [
+            "anotações",
+            "notas",
+            "documentos",
+            "devocional",
+            "ansiedade",
+            "sermão",
+        ]
+    ):
+        rag_res = await rag_graph.ainvoke(
+            {
+                "user_message": state["user_message"],
+                "conversation_history": state.get("conversation_history", []),
+            }
+        )
+        rag_notes = rag_res.get("llm_answer", "")
+
     history = get_conversation_context(state)[-1500:]
 
     response = LLM.invoke(
         [
             SystemMessage(
                 content=f"""
-                Você é um assistente especializado em revisão de rotina.
+                Você é um assistente especializado em revisão de rotina e planejamento.
 
-                Analise tarefas e compromissos.
+                Analise tarefas, compromissos e (quando fornecidas) anotações do usuário.
                 Identifique:
-                - Tarefas pendentes e prioridades.
-                - Compromissos próximos.
-                - Possíveis conflitos.
-                - Sobrecarga ou concentração de atividades.
-                - Recomendações para organizar a rotina.
+- Tarefas pendentes e prioridades.
+- Compromissos próximos.
+- Possíveis conflitos ou sobrecarga.
+- Recomendações práticas para organizar a rotina.
 
                 Não invente informações.
                 Não afirme que uma tarefa está atrasada sem evidência.
                 Não altere tarefas ou compromissos.
+                IMPORTANTE: Não chame ou invoque nenhuma ferramenta. Todos os dados já foram coletados.
 
                 Histórico recente:
                 {history}
@@ -575,6 +885,9 @@ async def review_flow(state: AgentState):
 
                 Compromissos do Google Calendar:
                 {calendar_data or "Nenhum compromisso encontrado."}
+
+                Anotações / Conhecimento Local (RAG):
+                {rag_notes or "Nenhuma consulta documental solicitada."}
             """
             ),
         ]
@@ -611,6 +924,7 @@ async def planning_flow(state: AgentState):
                 Informe título, data, horário e local quando disponíveis.
                 Não invente informações.
                 Se não houver eventos, informe isso.
+                IMPORTANTE: Não chame ferramentas.
 
                 Histórico da conversa:
                 {get_conversation_context(state)}

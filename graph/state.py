@@ -56,6 +56,9 @@ class AgentState(TypedDict):
     skill_name: NotRequired[str | None]
     skill_content: NotRequired[str | None]
 
+    # Guardrails
+    guardrail_error: NotRequired[str | None]
+    
     # Resposta
     llm_answer: NotRequired[str]
 
