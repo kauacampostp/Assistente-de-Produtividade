@@ -43,3 +43,7 @@ saida_testes.txt
 
 # Base vetorial (recriada com python -m rag.ingestion)
 rag/chroma_db/
+
+
+
+rag/documents/Notas/

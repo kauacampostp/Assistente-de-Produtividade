@@ -22,7 +22,7 @@ def decide_retrieval(state):
             SystemMessage(
                 content="""
                 Decida se a pergunta exige consultar a base de documentos
-                pessoais do usuário (sermões, livros, anotações).
+                pessoais do usuário.
 
                 Responda somente:
                 BUSCAR  -> precisa dos documentos
